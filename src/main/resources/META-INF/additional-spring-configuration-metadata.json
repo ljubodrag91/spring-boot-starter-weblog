@@ -1,0 +1,27 @@
+{
+  "properties": [
+    {
+      "name": "log-viewer.access-log-directory",
+      "type": "java.lang.String",
+      "defaultValue": "logs",
+      "description": "Directory where Tomcat access log files are written. Relative paths are resolved against catalina.base (set via server.tomcat.basedir). Must be consistent with server.tomcat.basedir in the consumer app."
+    },
+    {
+      "name": "log-viewer.excluded-prefixes",
+      "type": "java.util.List<java.lang.String>",
+      "description": "URI path prefixes (after context-path is stripped) that are excluded from the Tomcat access log and written to exclusions.log instead. Default: /admin/logs, /swagger-ui, /v3/api-docs."
+    }
+  ],
+  "hints": [
+    {
+      "name": "log-viewer.excluded-prefixes",
+      "values": [
+        { "value": "/admin/logs",    "description": "Log viewer endpoint (default)" },
+        { "value": "/swagger-ui",    "description": "Swagger UI (default)" },
+        { "value": "/v3/api-docs",   "description": "OpenAPI spec (default)" },
+        { "value": "/actuator",      "description": "Spring Boot Actuator" },
+        { "value": "/health",        "description": "Health check endpoint" }
+      ]
+    }
+  ]
+}

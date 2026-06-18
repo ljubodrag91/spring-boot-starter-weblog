@@ -1,0 +1,139 @@
+<!--
+    logback-weblog-include.xml
+    ══════════════════════════════════════════════════════════════════════
+    Include this file from your application's logback-spring.xml to
+    enable the three file appenders required by spring-boot-starter-weblog:
+
+        <include resource="logback-weblog-include.xml"/>
+
+    What this provides
+    ──────────────────
+    1. EXCLUSIONS LOG  — logs/exclusions.log
+       Routes the "com.eventhorizon.weblog.exclusions" logger to a rolling file.
+       Each line is a compact JSON object written by AccessLogExclusionFilter.
+       The log viewer reads this file for the "Excluded" tab.
+
+    2. CATALINA LOG — logs/catalina.log
+       Routes org.apache.catalina / tomcat / coyote internals to a
+       daily+size-capped rolling file (INFO+). The log viewer reads this
+       for the "Server Log" tab.
+
+    3. CATALINA ERROR LOG — logs/error.log
+       Same sources, ERROR-level only, separate file. The log viewer reads
+       this for the "Error Log" tab.
+
+    Rolling policy
+    ──────────────
+    All three use SizeAndTimeBasedRollingPolicy with .gz compression so
+    storage stays bounded. Adjust maxHistory / totalSizeCap to taste.
+
+    Logger name coupling
+    ────────────────────
+    The logger name "com.eventhorizon.weblog.exclusions" is a public constant at
+    AccessLogExclusionFilter.EXCLUSIONS_LOGGER_NAME. Both the Java code
+    and the <logger name="..."> in this file use the same string.
+-->
+<included>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         EXCLUSIONS LOG
+         ═══════════════════════════════════════════════════════════════ -->
+    <appender name="WEBLOG_EXCLUSIONS_FILE"
+              class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- No <file> element: Logback writes directly to the dated pattern name and avoids
+             the rename-before-compress step that fails on mounted/Windows filesystems. -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/exclusions.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>20MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>200MB</totalSizeCap>
+        </rollingPolicy>
+        <!-- Pattern is intentionally bare: the message IS the JSON line -->
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="WEBLOG_ASYNC_EXCLUSIONS"
+              class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>512</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="WEBLOG_EXCLUSIONS_FILE"/>
+    </appender>
+
+    <!-- additivity=false keeps JSON lines out of the root CONSOLE appender -->
+    <logger name="com.eventhorizon.weblog.exclusions"
+            level="INFO"
+            additivity="false">
+        <appender-ref ref="WEBLOG_ASYNC_EXCLUSIONS"/>
+    </logger>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         CATALINA LOG  (Tomcat internals — INFO+)
+         ═══════════════════════════════════════════════════════════════ -->
+    <appender name="WEBLOG_CATALINA_FILE"
+              class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- No <file> element: avoids rename-before-compress failure on mounted filesystems. -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/catalina.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{50} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         CATALINA ERROR LOG  (Tomcat internals — ERROR only)
+         ═══════════════════════════════════════════════════════════════ -->
+    <appender name="WEBLOG_CATALINA_ERROR_FILE"
+              class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- No <file> element: avoids rename-before-compress failure on mounted filesystems. -->
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>ERROR</level>
+        </filter>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>20MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>200MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{50} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="WEBLOG_ASYNC_CATALINA"
+              class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>512</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="WEBLOG_CATALINA_FILE"/>
+    </appender>
+
+    <appender name="WEBLOG_ASYNC_CATALINA_ERROR"
+              class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>512</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="WEBLOG_CATALINA_ERROR_FILE"/>
+    </appender>
+
+    <!-- Route Tomcat internals to catalina + error files -->
+    <logger name="org.apache.catalina" level="INFO" additivity="false">
+        <appender-ref ref="WEBLOG_ASYNC_CATALINA"/>
+        <appender-ref ref="WEBLOG_ASYNC_CATALINA_ERROR"/>
+    </logger>
+    <logger name="org.apache.tomcat" level="INFO" additivity="false">
+        <appender-ref ref="WEBLOG_ASYNC_CATALINA"/>
+        <appender-ref ref="WEBLOG_ASYNC_CATALINA_ERROR"/>
+    </logger>
+    <logger name="org.apache.coyote" level="INFO" additivity="false">
+        <appender-ref ref="WEBLOG_ASYNC_CATALINA"/>
+        <appender-ref ref="WEBLOG_ASYNC_CATALINA_ERROR"/>
+    </logger>
+
+</included>
