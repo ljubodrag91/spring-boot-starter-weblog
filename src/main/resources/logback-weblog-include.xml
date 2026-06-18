@@ -70,6 +70,40 @@
     </logger>
 
     <!-- ═══════════════════════════════════════════════════════════════
+         BODIES LOG  (request/response bodies — opt-in via log-viewer.body.enabled=true)
+         ═══════════════════════════════════════════════════════════════ -->
+    <appender name="WEBLOG_BODIES_FILE"
+              class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/bodies.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>14</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+        <!-- Pattern is intentionally bare: the message IS the JSON line -->
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="WEBLOG_ASYNC_BODIES"
+              class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>512</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="WEBLOG_BODIES_FILE"/>
+    </appender>
+
+    <!-- additivity=false keeps body lines out of the root CONSOLE appender. The
+         logger emits at INFO so default-INFO root configurations route nothing
+         here unless the BodyCaptureFilter bean is registered. -->
+    <logger name="com.eventhorizon.weblog.bodies"
+            level="INFO"
+            additivity="false">
+        <appender-ref ref="WEBLOG_ASYNC_BODIES"/>
+    </logger>
+
+    <!-- ═══════════════════════════════════════════════════════════════
          CATALINA LOG  (Tomcat internals — INFO+)
          ═══════════════════════════════════════════════════════════════ -->
     <appender name="WEBLOG_CATALINA_FILE"

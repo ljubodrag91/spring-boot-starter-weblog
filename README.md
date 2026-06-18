@@ -5,7 +5,8 @@ A Spring Boot starter that adds four production-logging capabilities to any Spri
 | Component | What it does |
 |---|---|
 | **RequestIdFilter** | Assigns a `X-Request-Id` UUID to every request; propagates to response header and SLF4J MDC for cross-log correlation |
-| **AccessLogExclusionFilter** | Suppresses admin/Swagger paths from the Tomcat access log and writes them to `logs/exclusions.log` as JSON lines |
+| **AccessLogExclusionFilter** | Suppresses admin/Swagger/Actuator paths from the Tomcat access log and writes them to `logs/exclusions.log` as JSON lines (including the authenticated user, when Spring Security is present) |
+| **BodyCaptureFilter** (opt-in) | Captures request/response bodies into `logs/bodies.log` with redaction + size cap; exposed in the viewer modal on-demand |
 | **LogViewerController** | Serves a full-featured browser log viewer at `/admin/logs` (4 tabs: access, server, error, excluded) |
 | **AccessLogCompressionTask** | Gzip-compresses Tomcat access log files at 00:10 nightly |
 
@@ -68,7 +69,7 @@ In your application's `pom.xml`:
 <dependency>
     <groupId>com.eventhorizon</groupId>
     <artifactId>spring-boot-starter-weblog</artifactId>
-    <version>1.0.0-sb3</version>
+    <version>1.1.0-sb3</version>
 </dependency>
 ```
 
@@ -178,7 +179,11 @@ All properties are under the `log-viewer` prefix.
 | Property | Type | Default | Description |
 |---|---|---|---|
 | `log-viewer.access-log-directory` | `String` | `logs` | Directory where Tomcat access log files are written. Relative paths resolve against `catalina.base` (`server.tomcat.basedir`). |
-| `log-viewer.excluded-prefixes` | `List<String>` | `/admin/logs`, `/swagger-ui`, `/v3/api-docs` | URI prefixes (after context path) excluded from the Tomcat access log |
+| `log-viewer.excluded-prefixes` | `List<String>` | `/admin/logs`, `/swagger-ui`, `/v3/api-docs`, `/actuator` | URI prefixes (after context path) excluded from the Tomcat access log |
+| `log-viewer.body.enabled` | `boolean` | `false` | Master switch for request/response body capture. Off by default — bodies can contain secrets. |
+| `log-viewer.body.max-bytes` | `int` | `8192` | Per-side cap. Oversize bodies are truncated and the captured JSON line carries `"reqTruncated":true` / `"resTruncated":true`. |
+| `log-viewer.body.redact-keys` | `List<String>` | `password`, `secret`, `token`, `authorization`, `apiKey`, `api_key` | Case-insensitive JSON keys whose values are replaced with `"***"` before write. |
+| `log-viewer.body.skip-content-types` | `List<String>` | `multipart/`, `image/`, `video/`, `audio/`, `application/octet-stream` | Content-type prefixes for which bodies are not captured at all (heap-safe skip for binary/multipart payloads). |
 
 ### Example overrides
 
@@ -186,9 +191,45 @@ All properties are under the `log-viewer` prefix.
 # Write access logs to an absolute path
 log-viewer.access-log-directory=/var/log/myapp
 
-# Add Actuator to excluded paths
+# Override the default excluded paths (the example below matches the default)
 log-viewer.excluded-prefixes=/admin/logs, /swagger-ui, /v3/api-docs, /actuator
+
+# Opt in to request/response body capture
+log-viewer.body.enabled=true
+log-viewer.body.max-bytes=16384
+log-viewer.body.redact-keys=password, secret, token, authorization, sessionId
 ```
+
+### Capturing the authenticated user
+
+When Spring Security is on the consumer's classpath, the starter records the
+authenticated principal's name (`Authentication#getName()` — typically the
+email or username) into a request attribute and includes a `"user"` field on
+every exclusion JSON line. The viewer surfaces this in the modal under the
+**Request** section as *Authenticated user*. No configuration required —
+when Spring Security is absent, the field is simply omitted.
+
+### Capturing request/response bodies
+
+Opt in with `log-viewer.body.enabled=true`. The `BodyCaptureFilter` then wraps
+every request with `ContentCachingRequestWrapper` /
+`ContentCachingResponseWrapper`, writes one JSON line per request to
+`logs/bodies.log`, and the viewer lazily fetches bodies via
+`/admin/logs/body?requestId=…` whenever you open the modal for a request.
+Each captured line is shaped like:
+
+```json
+{"ts":"2026-06-18 14:32:01.502","requestId":"abc","method":"POST",
+ "uri":"/api/v1/login","status":200,
+ "reqCT":"application/json","reqBytes":47,
+ "reqBody":"{\"email\":\"u@example.com\",\"password\":\"***\"}",
+ "resCT":"application/json","resBytes":1200,"resBody":"{\"token\":\"***\"}"}
+```
+
+> Caveat: redaction is a flat regex replace on `"key":"value"` pairs. It does
+> not understand nested JSON, gRPC, or form-encoded bodies. Review the bodies
+> log before sharing it externally — and prefer leaving body capture off in
+> production unless you've vetted your redact list.
 
 ---
 

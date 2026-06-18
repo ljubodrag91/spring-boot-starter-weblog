@@ -279,6 +279,42 @@ class LogViewerControllerTest {
     }
 
     @Test
+    void parseExclusionLine_withUserField_parsesUser() {
+        String line = "{\"ts\":\"2026-06-18 10:00:00.000\","
+                + "\"method\":\"GET\","
+                + "\"uri\":\"/admin/logs\","
+                + "\"status\":200,"
+                + "\"durationMs\":3,"
+                + "\"ip\":\"127.0.0.1\","
+                + "\"requestId\":\"req-with-user\","
+                + "\"user\":\"alice@example.com\"}";
+
+        LogViewerController.LogEntry entry =
+                ReflectionTestUtils.invokeMethod(controller, "parseExclusionLine", line);
+
+        assertThat(entry).isNotNull();
+        assertThat(entry.user()).isEqualTo("alice@example.com");
+    }
+
+    @Test
+    void parseExclusionLine_withoutUserField_userIsNull() {
+        // Backward-compat: pre-1.1 exclusion lines have no user field
+        String line = "{\"ts\":\"2026-06-18 10:00:00.000\","
+                + "\"method\":\"GET\","
+                + "\"uri\":\"/admin/logs\","
+                + "\"status\":200,"
+                + "\"durationMs\":3,"
+                + "\"ip\":\"127.0.0.1\","
+                + "\"requestId\":\"req-no-user\"}";
+
+        LogViewerController.LogEntry entry =
+                ReflectionTestUtils.invokeMethod(controller, "parseExclusionLine", line);
+
+        assertThat(entry).isNotNull();
+        assertThat(entry.user()).isNull();
+    }
+
+    @Test
     void parseExclusionLine_blankLine_returnsNull() {
         LogViewerController.LogEntry entry =
                 ReflectionTestUtils.invokeMethod(controller, "parseExclusionLine", "");
@@ -400,6 +436,48 @@ class LogViewerControllerTest {
                     .andExpect(jsonPath("$.length()").value(1))
                     .andExpect(jsonPath("$[0].uri").value("/myapp/admin/logs"))
                     .andExpect(jsonPath("$[0].requestId").value("req-excl-1"));
+        }
+
+        // ── /admin/logs/body endpoint ─────────────────────────────────────────
+
+        @Test
+        void getLogsBody_noBodiesFile_returnsEmptyObject() throws Exception {
+            // No bodies.*.log files in tempDir — endpoint must degrade gracefully (no 404,
+            // no 500) so the viewer modal can always call it and just render nothing.
+            nestedMockMvc.perform(get("/admin/logs/body").param("requestId", "anything"))
+                    .andExpect(status().isOk())
+                    .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                    .andExpect(content().string("{}"));
+        }
+
+        @Test
+        void getLogsBody_matchingRequestId_returnsMatchingLine() throws Exception {
+            String matching =
+                    "{\"ts\":\"2026-06-18 10:00:00.000\",\"requestId\":\"abc-match\","
+                            + "\"method\":\"POST\",\"uri\":\"/api/login\",\"status\":200,"
+                            + "\"reqBody\":\"{\\\"email\\\":\\\"u@x\\\"}\"}";
+            String other =
+                    "{\"ts\":\"2026-06-18 09:59:00.000\",\"requestId\":\"different\","
+                            + "\"method\":\"GET\",\"uri\":\"/api/x\",\"status\":200}";
+            Files.writeString(tempDir.resolve("bodies.2026-06-18.0.log"),
+                    other + "\n" + matching + "\n");
+
+            nestedMockMvc.perform(get("/admin/logs/body").param("requestId", "abc-match"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.requestId").value("abc-match"))
+                    .andExpect(jsonPath("$.uri").value("/api/login"))
+                    .andExpect(jsonPath("$.reqBody").value("{\"email\":\"u@x\"}"));
+        }
+
+        @Test
+        void getLogsBody_unknownRequestId_returnsEmptyObject() throws Exception {
+            // bodies.log present but no entry matches → still {} (not 404)
+            Files.writeString(tempDir.resolve("bodies.2026-06-18.0.log"),
+                    "{\"requestId\":\"present\",\"reqBody\":\"x\"}\n");
+
+            nestedMockMvc.perform(get("/admin/logs/body").param("requestId", "missing"))
+                    .andExpect(status().isOk())
+                    .andExpect(content().string("{}"));
         }
     }
 

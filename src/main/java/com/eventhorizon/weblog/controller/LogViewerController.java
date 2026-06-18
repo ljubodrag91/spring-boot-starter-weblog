@@ -85,6 +85,25 @@ public class LogViewerController {
                 .body(readLog(type, lines));
     }
 
+    /**
+     * Returns the captured request/response bodies for a single request ID, or
+     * an empty object if no entry matches. Only available when
+     * {@code log-viewer.body.enabled=true} — otherwise the bodies file does not
+     * exist and the endpoint returns {@code {}}.
+     *
+     * <p>Scans newest-first across {@code bodies.*.log}/{@code bodies.*.log.gz}
+     * files until the first line whose {@code "requestId":"…"} substring matches.
+     * Bodies are typically queried while debugging an entry currently visible in
+     * the log table, so the match is almost always within the active file.
+     */
+    @GetMapping(value = "/body", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> body(@RequestParam("requestId") String requestId) {
+        String json = findBodyEntry(requestId);
+        return ResponseEntity.ok()
+                .header("Cache-Control", "no-store")
+                .body(json != null ? json : "{}");
+    }
+
     /** Valid "last N lines" choices that match the frontend dropdown options. */
     private static final int[] VALID_LINE_OPTIONS = {2000, 5000, 10000, 20000, 50000};
 
@@ -125,7 +144,9 @@ public class LogViewerController {
             String accept, String acceptEncoding, String acceptLanguage,
             String connection, String reqCacheControl,
             String respContentType, String respContentLength,
-            String respEncoding, String respCacheControl
+            String respEncoding, String respCacheControl,
+            // Spring Security principal — only populated for exclusion-log entries.
+            String user
     ) {}
 
     // ────────────────────────────────────────────────────────────────────────
@@ -333,7 +354,8 @@ public class LogViewerController {
                     accept, acceptEncoding, acceptLanguage,
                     connection, reqCacheControl,
                     respContentType, respContentLength,
-                    respEncoding, respCacheControl);
+                    respEncoding, respCacheControl,
+                    null); // user — only populated for exclusion entries
         } catch (Exception e) {
             log.warn("parseTomcatAccess: failed to parse line: {}", line, e);
             return null;
@@ -421,7 +443,8 @@ public class LogViewerController {
                         null, null, null, null,
                         null, null, null, null, null,
                         null, null, null, null, null,
-                        null, null, null, null);
+                        null, null, null, null,
+                        null);
                 stack = null;
             } else if (pending != null && !line.isBlank()) {
                 if (stack == null) stack = new StringBuilder(line);
@@ -443,7 +466,8 @@ public class LogViewerController {
                     null, null, null, null,
                     null, null, null, null, null,
                     null, null, null, null, null,
-                    null, null, null, null));
+                    null, null, null, null,
+                    null));
         } else {
             out.add(e);
         }
@@ -559,16 +583,51 @@ public class LogViewerController {
             long    durationMs = ((Number)  m.getOrDefault("durationMs", 0L)).longValue();
             String  ip         = (String)   m.getOrDefault("ip",         "-");
             String  requestId  = (String)   m.getOrDefault("requestId",  null);
+            String  user       = (String)   m.getOrDefault("user",       null);
             return new LogEntry(ts,
                     method, uri, status, durationMs,
                     null, null, ip, null, null, requestId, null,
                     null, null, null, null,
                     null, null, null, null, null, null, null,
                     null, null, null, null, null, null, null,
-                    null, null, null, null);
+                    null, null, null, null,
+                    user);
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Bodies log lookup (one entry by requestId)
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Scans {@code bodies.*.log}/{@code .log.gz} files newest-first and returns
+     * the first JSON line that contains {@code "requestId":"<requestId>"}, or
+     * {@code null} if no entry matches.
+     *
+     * <p>Substring match is sufficient because {@link com.eventhorizon.weblog.filter.BodyCaptureFilter}
+     * always emits the field in that exact form (no whitespace, key first) and the
+     * request ID character set is restricted by {@link com.eventhorizon.weblog.filter.RequestIdFilter#SAFE_ID}
+     * to alphanumerics + {@code -_}, so collisions with body content are
+     * effectively impossible.
+     */
+    private String findBodyEntry(String requestId) {
+        if (requestId == null || requestId.isBlank()) return null;
+        File dir = new File(logDir);
+        if (!dir.exists() || !dir.isDirectory()) return null;
+        File[] files = findLogFiles(dir, "bodies");
+        if (files.length == 0) return null;
+        String needle = "\"requestId\":\"" + requestId + "\"";
+        for (File f : files) {
+            List<String> lines = f.getName().endsWith(".gz")
+                    ? tailLinesGzip(f, 50_000)
+                    : tailLines(f, 50_000);
+            for (String line : lines) {
+                if (line.contains(needle)) return line;
+            }
+        }
+        return null;
     }
 
     /** Converts "yyyy-MM-dd HH:mm:ss.SSS" → "dd-MMM-yyyy HH:mm:ss.SSS". */

@@ -2,6 +2,7 @@ package com.eventhorizon.weblog;
 
 import com.eventhorizon.weblog.controller.LogViewerController;
 import com.eventhorizon.weblog.filter.AccessLogExclusionFilter;
+import com.eventhorizon.weblog.filter.BodyCaptureFilter;
 import com.eventhorizon.weblog.filter.RequestIdFilter;
 import com.eventhorizon.weblog.task.AccessLogCompressionTask;
 import org.apache.catalina.valves.AccessLogValve;
@@ -40,7 +41,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @EnableConfigurationProperties(WebLogProperties.class)
-@Import({RequestIdFilter.class, AccessLogExclusionFilter.class})
+@Import({RequestIdFilter.class, AccessLogExclusionFilter.class, BodyCaptureFilter.class})
 public class WebLogAutoConfiguration {
 
     // 29-token pattern — positions are read by index in LogViewerController.parseTomcatAccess().

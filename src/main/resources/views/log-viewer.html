@@ -519,9 +519,14 @@
         .legend-row {
             display: flex;
             gap: 16px;
-            font-size: 10.5px;
+            /* Mono so the bucket labels (2xx/3xx/4xx/5xx) align visually with the
+               counts beside them — Patrick Hand mixed with mono numerals looked
+               jumpy. */
+            font-family: var(--mono);
+            font-size: 11.5px;
             color: var(--dim);
-            font-weight: 600;
+            font-weight: 500;
+            letter-spacing: 0.2px;
         }
 
         .legend-row .swatch {
@@ -825,13 +830,18 @@
         .seg.sidebar-seg button {
             border: none;
             background: transparent;
-            font-family: var(--sans);
-            font-size: 11px;
-            font-weight: 600;
-            padding: 5px 0;
+            /* Patrick Hand at 11px on a 40-px-wide preset button rendered the
+               "15m / 1h / 6h / 24h / all" codes rough and unevenly spaced.
+               Mono reads as intentional for short alphanumeric codes and lines
+               up with the rest of the viewer's mono-styled tokens. */
+            font-family: var(--mono);
+            font-size: 12px;
+            font-weight: 500;
+            padding: 6px 0;
             color: var(--ink);
             border-right: 1px solid var(--rule2);
             border-bottom: 1px solid var(--rule2);
+            letter-spacing: 0.3px;
         }
 
         .seg.sidebar-seg button:nth-child(3n) {
@@ -2202,6 +2212,64 @@
             font-size: 11.5px;
         }
 
+        /* Lazy-loaded request/response body block — full-width inside field-grid. */
+        .field-grid .body-block {
+            grid-column: 1 / -1;
+            padding: 10px 0 14px;
+            border-bottom: 1px solid var(--rule);
+        }
+        .field-grid .body-block .body-label {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            font-size: 10px;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            color: var(--faint);
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        .field-grid .body-block .body-meta {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--dim);
+            font-weight: 500;
+            letter-spacing: 0;
+            text-transform: none;
+        }
+        .field-grid .body-block .body-tag {
+            font-family: var(--mono);
+            font-size: 9.5px;
+            background: var(--paper2);
+            border: 1px dashed var(--rule2);
+            padding: 1px 6px;
+            color: var(--dim);
+            letter-spacing: 0;
+            text-transform: none;
+        }
+        .field-grid .body-block .body-tag.trunc { color: var(--signal); border-color: var(--signal); }
+        .field-grid .body-block .body-tag.skip  { color: var(--amber);  border-color: var(--amber);  }
+        .field-grid .body-block pre {
+            font-family: var(--mono);
+            font-size: 11.5px;
+            color: var(--ink);
+            background: var(--paper2);
+            border: 1px dashed var(--rule2);
+            padding: 8px 10px;
+            max-height: 280px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            line-height: 1.45;
+            margin: 0;
+        }
+        .field-grid .body-block .body-empty {
+            font-family: var(--sans);
+            font-size: 11.5px;
+            color: var(--faint);
+            font-style: italic;
+        }
+
         .field-grid .v .fv-accent {
             color: var(--dim);
             font-size: 10.5px;
@@ -3552,6 +3620,48 @@
     let modalCurrent = null;
     let modalRoot = null;
     let modalDrawIdx = -1;
+    // Monotonic counter so that a slow body fetch from a previously-open modal
+    // doesn't overwrite the body section of a newer modal opened mid-flight.
+    let _bodyFetchSeq = 0;
+
+    function renderBodySection(label, body, ct, bytes, truncated, skipped) {
+        const tags = [];
+        if (ct)        tags.push(`<span class="body-tag">${h(ct)}</span>`);
+        if (bytes!=null) tags.push(`<span class="body-meta">${fmt.format(bytes)} B</span>`);
+        if (truncated) tags.push(`<span class="body-tag trunc">truncated</span>`);
+        if (skipped)   tags.push(`<span class="body-tag skip">skipped (binary)</span>`);
+        let inner;
+        if (skipped)        inner = `<div class="body-empty">Body not captured for ${h(ct || 'this content type')}.</div>`;
+        else if (body==null||body==='') inner = `<div class="body-empty">(empty)</div>`;
+        else                inner = `<pre>${h(prettyMaybeJson(body, ct))}</pre>`;
+        return `<div class="body-block">
+            <div class="body-label"><span>${label}</span>${tags.join('')}</div>
+            ${inner}
+        </div>`;
+    }
+
+    function prettyMaybeJson(s, ct) {
+        if (typeof s !== 'string' || !ct || !/json/i.test(ct)) return s;
+        try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
+    }
+
+    function loadBodiesForCurrentModal(r) {
+        if (!r || !r.requestId || r.requestId === '-' || r.requestId === '—') return;
+        const seq = ++_bodyFetchSeq;
+        fetch(`${CTX}/admin/logs/body?requestId=${encodeURIComponent(r.requestId)}`, {credentials: 'same-origin'})
+            .then(rs => rs.ok ? rs.json() : null)
+            .then(b => {
+                if (seq !== _bodyFetchSeq) return;       // another modal opened
+                if (!b || Object.keys(b).length === 0) return; // no entry — body capture disabled or never logged
+                const target = $('modalFields');
+                if (!target) return;
+                let html = `<span class="fg-section">Body</span>`;
+                html += renderBodySection('Request',  b.reqBody, b.reqCT, b.reqBytes, b.reqTruncated, b.reqSkipped);
+                html += renderBodySection('Response', b.resBody, b.resCT, b.resBytes, b.resTruncated, b.resSkipped);
+                target.insertAdjacentHTML('beforeend', html);
+            })
+            .catch(() => { /* viewer should never crash on body fetch failure */ });
+    }
 
     function openModal(entry, isNav) {
         const r = entry;
@@ -3649,6 +3759,7 @@
                 if (r.connection) row('Connection', h(r.connection));
                 if (r.reqCacheControl) row('Cache-Control', h(r.reqCacheControl));
                 row('X-Request-Id', `<span class="long">${h(r.requestId || '—')}</span>`, 'long');
+                if (r.user) row('Authenticated user', `<span class="long">${h(r.user)}</span>`, 'long');
                 row('Referer', h(r.referer || '—'));
                 row('User-Agent', `<span class="long">${h(r.ua || '—')}</span>`, 'long');
 
@@ -3665,6 +3776,9 @@
                         ? `<span class="fg-section">${h(f[1])}</span>`
                         : `<span class="k">${h(f[1])}</span><span class="v${f[3] ? ' ' + f[3] : ''}">${f[2]}</span>`
                 ).join('');
+
+                // Async — only renders if body capture is enabled and an entry exists.
+                loadBodiesForCurrentModal(r);
             }
 
         }
