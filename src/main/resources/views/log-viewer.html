@@ -1069,7 +1069,7 @@
 
         .col-head, .row {
             display: grid;
-            grid-template-columns: 34px 192px 56px 1fr 86px 56px 64px 110px;
+            grid-template-columns: 34px 192px 56px 1fr 86px 56px 64px 110px 120px;
             gap: 0;
             align-items: baseline;
         }
@@ -1212,6 +1212,15 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+
+        .row .cell-user {
+            font-size: 11px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding-left: 10px;
+            color: var(--dim);
         }
 
         .m-GET {
@@ -1865,7 +1874,7 @@
         /* ── RESPONSIVE ────────────────────────────────────────── */
         @media (max-width: 1300px) {
             .col-head, .row {
-                grid-template-columns: 34px 192px 50px 1fr 64px 50px 64px 92px;
+                grid-template-columns: 34px 192px 50px 1fr 64px 50px 64px 92px 100px;
             }
 
             .row .cell-req {
@@ -1887,7 +1896,7 @@
             }
 
             .col-head, .row {
-                grid-template-columns: 34px 192px 50px 1fr 50px 64px 88px;
+                grid-template-columns: 34px 192px 50px 1fr 50px 64px 88px 90px;
             }
 
             .col-req, .cell-req {
@@ -1918,7 +1927,7 @@
                 grid-template-columns: 28px 140px 50px 1fr 50px 64px;
             }
 
-            .col-ip, .cell-ip {
+            .col-ip, .cell-ip, .col-user, .cell-user {
                 display: none;
             }
 
@@ -2082,7 +2091,7 @@
                 font-size: 11.5px;
             }
 
-            .cell-req, .col-req, .cell-ip, .col-ip {
+            .cell-req, .col-req, .cell-ip, .col-ip, .cell-user, .col-user {
                 display: none;
             }
 
@@ -2754,6 +2763,23 @@
 
     function durClass(d) {
         return d > 1000 ? 'd-slow' : d > 500 ? 'd-warn' : 'd-ok';
+    }
+
+    const USER_PALETTES = [
+        {bg:'rgba(58,74,122,.09)',  accent:'#3a4a7a'},
+        {bg:'rgba(63,107,74,.09)',  accent:'#3f6b4a'},
+        {bg:'rgba(107,74,138,.09)', accent:'#6b4a8a'},
+        {bg:'rgba(141,114,72,.09)', accent:'#8d7248'},
+        {bg:'rgba(72,110,110,.09)', accent:'#486e6e'},
+        {bg:'rgba(110,72,72,.09)',  accent:'#6e4848'},
+        {bg:'rgba(72,90,110,.09)',  accent:'#485a6e'},
+        {bg:'rgba(90,100,72,.09)',  accent:'#5a6448'},
+    ];
+
+    function userPalette(user) {
+        let h = 0;
+        for (let i = 0; i < user.length; i++) h = (Math.imul(31, h) + user.charCodeAt(i)) | 0;
+        return USER_PALETTES[Math.abs(h) % USER_PALETTES.length];
     }
 
     function fmtBytes(n) {
@@ -3470,7 +3496,7 @@
         $('tableSubText').textContent = `${fmt.format(total)} ${total === 1 ? 'entry' : 'entries'}`;
         const sortLabels = {
             timestamp: 'time', method: 'verb', uri: 'path', status: 'status', durationMs: 'duration',
-            level: 'level', logger: 'logger', thread: 'thread', message: 'message'
+            user: 'user', level: 'level', logger: 'logger', thread: 'thread', message: 'message'
         };
         $('tableSortLabel').textContent = sortLabels[sortField] || sortField;
         $('tableSortDir').textContent = sortDir === 'desc' ? '↓' : '↑';
@@ -3495,7 +3521,8 @@
         <span class="col-req">Req&nbsp;ID</span>
         <span class="sortable col-num ${sc('status')}" data-sort="status">Stat<span class="arr">${arr('status')}</span></span>
         <span class="sortable col-num ${sc('durationMs')}" data-sort="durationMs" style="padding-left:10px">Dur<span class="arr">${arr('durationMs')}</span></span>
-        <span class="col-ip col-num">From</span>`;
+        <span class="col-ip col-num">From</span>
+        <span class="sortable col-user ${sc('user')}" data-sort="user">User<span class="arr">${arr('user')}</span></span>`;
         }
 
         if (!total) {
@@ -3519,10 +3546,15 @@
             }).join('');
         } else {
             $('rows').innerHTML = PAGE_ROWS.map((r, i) => {
-                const sb    = statusBucket(r.status);
-                const reqId = (r.requestId || '').slice(0, 8);
-                const isNew = newRowSet.has(r);
-                return `<div class="row ${sb === '5' ? 'flagged' : ''}${isNew ? ' row-new' : ''}" data-idx="${start + i}">
+                const sb      = statusBucket(r.status);
+                const reqId   = (r.requestId || '').slice(0, 8);
+                const isNew   = newRowSet.has(r);
+                const pal     = r.user ? userPalette(r.user) : null;
+                const userDisp = r.user ? r.user.replace(/@.*$/, '') : '';
+                const rowStyle = pal && sb !== '5'
+                    ? ` style="background:${pal.bg};border-left-color:${pal.accent}"`
+                    : '';
+                return `<div class="row ${sb === '5' ? 'flagged' : ''}${isNew ? ' row-new' : ''}" data-idx="${start + i}"${rowStyle}>
           <span class="cell-rownum">${start + i + 1}</span>
           <span class="cell-time">${timeHtml(r.timestamp)}</span>
           <span class="cell-method ${methodClass(r.method)}">${h(r.method)}</span>
@@ -3531,6 +3563,7 @@
           <span class="cell-status s${sb}">${h(r.status)}</span>
           <span class="cell-dur ${durClass(r.durationMs)}">${fmt.format(r.durationMs)}ms</span>
           <span class="cell-ip col-ip" title="${h(r.ip)}">${h(r.ip)}</span>
+          <span class="cell-user col-user" title="${h(r.user || '')}"${pal ? ` style="color:${pal.accent}"` : ''}>${h(userDisp)}</span>
         </div>`;
             }).join('');
         }

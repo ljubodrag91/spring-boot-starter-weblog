@@ -13,7 +13,7 @@
 
     <groupId>com.eventhorizon</groupId>
     <artifactId>spring-boot-starter-weblog</artifactId>
-    <version>1.2.0-sb3</version>
+    <version>1.2.1-sb3</version>
     <packaging>jar</packaging>
 
     <name>spring-boot-starter-weblog</name>
