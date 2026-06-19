@@ -215,7 +215,7 @@ public class LogViewerController {
     //
     // Positional: method=0 uri=1 protocol=2 status=3 respBytes=4
     //             durationMs=5 ttfbMs=6 remoteIp=7 xForwardedFor=8
-    //             referer=22 ua=23 requestId=28
+    //             referer=22 ua=23 requestId=28 user=29
     // ────────────────────────────────────────────────────────────────────────
 
     private List<LogEntry> readTomcatAccess(int maxLines) {
@@ -334,6 +334,7 @@ public class LogViewerController {
             String respEncoding    = tget(tok, 26);
             String respCacheControl= tget(tok, 27);
             String requestId       = tget(tok, 28);
+            String user            = tget(tok, 29);
 
             String ip = xForwardedFor != null ? xForwardedFor.split(",")[0].trim()
                       : xRealIp      != null ? xRealIp
@@ -355,7 +356,7 @@ public class LogViewerController {
                     connection, reqCacheControl,
                     respContentType, respContentLength,
                     respEncoding, respCacheControl,
-                    null); // user — only populated for exclusion entries
+                    user);
         } catch (Exception e) {
             log.warn("parseTomcatAccess: failed to parse line: {}", line, e);
             return null;

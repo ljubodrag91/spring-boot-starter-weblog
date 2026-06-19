@@ -44,7 +44,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @Import({RequestIdFilter.class, AccessLogExclusionFilter.class, BodyCaptureFilter.class})
 public class WebLogAutoConfiguration {
 
-    // 29-token pattern — positions are read by index in LogViewerController.parseTomcatAccess().
+    // 30-token pattern — positions are read by index in LogViewerController.parseTomcatAccess().
     // Changing token order or inserting tokens in the middle silently breaks the parser.
     // Adding new tokens at the end is safe.
     static final String ACCESS_LOG_PATTERN =
@@ -55,7 +55,8 @@ public class WebLogAutoConfiguration {
             " \"%{Connection}i\" \"%{Cache-Control}i\" \"%{X-Request-Id}i\"" +
             " \"%{Referer}i\" \"%{User-Agent}i\"" +
             " \"%{Content-Type}o\" %{Content-Length}o \"%{Content-Encoding}o\"" +
-            " \"%{Cache-Control}o\" \"%{X-Request-Id}o\"";
+            " \"%{Cache-Control}o\" \"%{X-Request-Id}o\"" +
+            " \"%{com.eventhorizon.weblog.user}r\"";
 
     // LogViewerController and AccessLogCompressionTask are instantiated here
     // (not via @Import) so Spring fully processes their @Value and @PostConstruct
