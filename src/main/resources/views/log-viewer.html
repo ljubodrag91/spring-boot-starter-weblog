@@ -3063,7 +3063,7 @@
         if (searchF) {
             const hay = MODE === 'server'
                 ? ((r.message || '') + ' ' + (r.logger || '') + ' ' + (r.thread || '') + ' ' + (r.level || '')).toLowerCase()
-                : ((r.uri || '') + ' ' + (r.ip || '') + ' ' + (r.ua || '') + ' ' + (r.requestId || '')).toLowerCase();
+                : ((r.uri || '') + ' ' + (r.ip || '') + ' ' + (r.ua || '') + ' ' + (r.requestId || '') + ' ' + (r.user || '')).toLowerCase();
             if (!hay.includes(searchF.toLowerCase())) return false;
         }
         return true;
@@ -3356,7 +3356,7 @@
             if (searchLow) {
                 const hay = MODE === 'server'
                     ? ((r.message||'')+' '+(r.logger||'')+' '+(r.thread||'')+' '+(r.level||'')).toLowerCase()
-                    : ((r.uri||'')+' '+(r.ip||'')+' '+(r.ua||'')+' '+(r.requestId||'')).toLowerCase();
+                    : ((r.uri||'')+' '+(r.ip||'')+' '+(r.ua||'')+' '+(r.requestId||'')+' '+(r.user||'')).toLowerCase();
                 if (!hay.includes(searchLow)) return false;
             }
             if (exceptDim !== 'status' && !entryMatchesClassFilter(r)) return false;
