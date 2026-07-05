@@ -70,7 +70,7 @@ In your application's `pom.xml`:
 <dependency>
     <groupId>com.eventhorizon</groupId>
     <artifactId>spring-boot-starter-weblog</artifactId>
-    <version>1.3.0-sb3</version>
+    <version>1.3.1-sb3</version>
 </dependency>
 ```
 
