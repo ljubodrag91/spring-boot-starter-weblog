@@ -5,6 +5,7 @@ A Spring Boot starter that adds four production-logging capabilities to any Spri
 | Component | What it does |
 |---|---|
 | **RequestIdFilter** | Assigns a `X-Request-Id` UUID to every request; propagates to response header and SLF4J MDC for cross-log correlation |
+| **AuthInfoFilter** | Records a *safe summary* of the `Authorization` header (scheme, JWT `sub`/`type`/`exp`, expired-or-not — never the credential itself) into the access log for 401/403 debugging |
 | **AccessLogExclusionFilter** | Suppresses admin/Swagger/Actuator paths from the Tomcat access log and writes them to `logs/exclusions.log` as JSON lines (including the authenticated user, when Spring Security is present) |
 | **BodyCaptureFilter** (opt-in) | Captures request/response bodies into `logs/bodies.log` with redaction + size cap; exposed in the viewer modal on-demand |
 | **LogViewerController** | Serves a full-featured browser log viewer at `/admin/logs` (4 tabs: access, server, error, excluded) |
@@ -69,7 +70,7 @@ In your application's `pom.xml`:
 <dependency>
     <groupId>com.eventhorizon</groupId>
     <artifactId>spring-boot-starter-weblog</artifactId>
-    <version>1.1.0-sb3</version>
+    <version>1.3.0-sb3</version>
 </dependency>
 ```
 
@@ -126,7 +127,7 @@ The include provides three rolling appenders:
 
 ### 3. Tomcat access log — nothing to configure
 
-The starter registers Tomcat's `AccessLogValve` automatically via `WebServerFactoryCustomizer`. The 29-token pattern, file naming, rotation, 30-day retention, and `condition-unless=skipLog` are all set in code. No `server.tomcat.accesslog.*` properties are needed.
+The starter registers Tomcat's `AccessLogValve` automatically via `WebServerFactoryCustomizer`. The 32-token pattern, file naming, rotation, 30-day retention, and `condition-unless=skipLog` are all set in code. No `server.tomcat.accesslog.*` properties are needed.
 
 The starter resolves the log directory against the JVM working directory (`user.dir`) — the same anchor Logback uses — so access logs always land alongside `catalina.log` and `exclusions.log` regardless of `server.tomcat.basedir`.
 
@@ -208,6 +209,35 @@ email or username) into a request attribute and includes a `"user"` field on
 every exclusion JSON line. The viewer surfaces this in the modal under the
 **Request** section as *Authenticated user*. No configuration required —
 when Spring Security is absent, the field is simply omitted.
+
+### Debugging 401/403 — Authorization summary & deny reason
+
+Two fields exist specifically for auth-failure triage; both appear in the viewer's
+request modal and in the `/admin/logs/data` JSON:
+
+- **`auth`** (token[30], request attribute `com.eventhorizon.weblog.auth`) — set
+  automatically by `AuthInfoFilter` for every request carrying an `Authorization`
+  header. The raw credential is **never** written; only a safe summary:
+  - `Bearer JWT sub=user@example.com type=access exp=2026-07-05T11:42:00Z (expired 18m ago) len=812`
+    — JWT payload decoded (unverified) for `sub`, `type`/`typ`, `exp`, plus an
+    expired/valid marker relative to server time.
+  - `Bearer opaque len=43` — non-JWT bearer credential.
+  - `Basic user=admin` — username half only.
+  - `Digest len=120` — any other scheme.
+
+- **`deny`** (token[31], request attribute `com.eventhorizon.weblog.deny`) — a short
+  reason your application may set when it rejects a request, e.g. in a JWT filter:
+
+  ```java
+  request.setAttribute(AuthInfoFilter.DENY_REQ_ATTR, "jwt-expired");
+  ```
+
+  Keep the value quote-free (it is written inside a quoted access-log token). The
+  viewer shows it as **Denied because** in the Response section of the modal.
+
+The exclusions log (`/admin/logs` itself, Swagger, Actuator) carries the same two
+fields as `"auth"` / `"deny"` JSON keys, so Basic-auth failures on the viewer are
+debuggable from the **Excluded** tab.
 
 ### Capturing request/response bodies
 

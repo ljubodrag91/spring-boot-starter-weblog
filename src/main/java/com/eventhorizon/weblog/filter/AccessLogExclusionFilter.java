@@ -120,9 +120,15 @@ public class AccessLogExclusionFilter {
                         ? hres.getHeader(RequestIdFilter.HEADER) : null;
                 Object userAttr = http.getAttribute(USER_REQ_ATTR);
                 String user = userAttr instanceof String s && !s.isBlank() ? s : null;
+                Object authAttr = http.getAttribute(AuthInfoFilter.AUTH_REQ_ATTR);
+                String auth = authAttr instanceof String s && !s.isBlank() ? s : null;
+                Object denyAttr = http.getAttribute(AuthInfoFilter.DENY_REQ_ATTR);
+                String deny = denyAttr instanceof String s && !s.isBlank() ? s : null;
                 // Escape backslash and double-quote so the URI/user stay valid JSON.
                 String safeUri  = jsonEscape(uri);
                 String safeUser = user != null ? jsonEscape(user) : null;
+                String safeAuth = auth != null ? jsonEscape(auth) : null;
+                String safeDeny = deny != null ? jsonEscape(deny) : null;
                 String json = "{\"ts\":\"" + ts + "\""
                         + ",\"method\":\"" + http.getMethod() + "\""
                         + ",\"uri\":\"" + safeUri + "\""
@@ -131,6 +137,8 @@ public class AccessLogExclusionFilter {
                         + ",\"ip\":\"" + ip + "\""
                         + (reqId    != null ? ",\"requestId\":\"" + reqId + "\""  : "")
                         + (safeUser != null ? ",\"user\":\"" + safeUser + "\""    : "")
+                        + (safeAuth != null ? ",\"auth\":\"" + safeAuth + "\""    : "")
+                        + (safeDeny != null ? ",\"deny\":\"" + safeDeny + "\""    : "")
                         + "}";
                 EXCL_LOG.info("{}", json);
             }

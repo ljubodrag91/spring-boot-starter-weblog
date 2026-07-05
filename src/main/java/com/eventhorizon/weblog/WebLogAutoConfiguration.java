@@ -2,6 +2,7 @@ package com.eventhorizon.weblog;
 
 import com.eventhorizon.weblog.controller.LogViewerController;
 import com.eventhorizon.weblog.filter.AccessLogExclusionFilter;
+import com.eventhorizon.weblog.filter.AuthInfoFilter;
 import com.eventhorizon.weblog.filter.BodyCaptureFilter;
 import com.eventhorizon.weblog.filter.RequestIdFilter;
 import com.eventhorizon.weblog.task.AccessLogCompressionTask;
@@ -41,12 +42,14 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @EnableConfigurationProperties(WebLogProperties.class)
-@Import({RequestIdFilter.class, AccessLogExclusionFilter.class, BodyCaptureFilter.class})
+@Import({RequestIdFilter.class, AccessLogExclusionFilter.class, BodyCaptureFilter.class, AuthInfoFilter.class})
 public class WebLogAutoConfiguration {
 
-    // 30-token pattern — positions are read by index in LogViewerController.parseTomcatAccess().
+    // 32-token pattern — positions are read by index in LogViewerController.parseTomcatAccess().
     // Changing token order or inserting tokens in the middle silently breaks the parser.
     // Adding new tokens at the end is safe.
+    // token[30] = safe Authorization summary set by AuthInfoFilter (never the raw credential)
+    // token[31] = consumer-set auth-failure reason (AuthInfoFilter.DENY_REQ_ATTR)
     static final String ACCESS_LOG_PATTERN =
             "%{yyyy-MM-dd HH:mm:ss.SSS}t %m \"%U%q\" %H %s %b %D %F \"%a\"" +
             " \"%{X-Forwarded-For}i\" \"%{X-Real-IP}i\" %v:%p %I %X" +
@@ -56,7 +59,9 @@ public class WebLogAutoConfiguration {
             " \"%{Referer}i\" \"%{User-Agent}i\"" +
             " \"%{Content-Type}o\" %{Content-Length}o \"%{Content-Encoding}o\"" +
             " \"%{Cache-Control}o\" \"%{X-Request-Id}o\"" +
-            " \"%{com.eventhorizon.weblog.user}r\"";
+            " \"%{com.eventhorizon.weblog.user}r\"" +
+            " \"%{com.eventhorizon.weblog.auth}r\"" +
+            " \"%{com.eventhorizon.weblog.deny}r\"";
 
     // LogViewerController and AccessLogCompressionTask are instantiated here
     // (not via @Import) so Spring fully processes their @Value and @PostConstruct

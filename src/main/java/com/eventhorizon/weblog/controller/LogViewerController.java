@@ -146,7 +146,9 @@ public class LogViewerController {
             String respContentType, String respContentLength,
             String respEncoding, String respCacheControl,
             // Spring Security principal — only populated for exclusion-log entries.
-            String user
+            String user,
+            // Safe Authorization summary (AuthInfoFilter) and consumer-set deny reason.
+            String auth, String deny
     ) {}
 
     // ────────────────────────────────────────────────────────────────────────
@@ -335,6 +337,8 @@ public class LogViewerController {
             String respCacheControl= tget(tok, 27);
             String requestId       = tget(tok, 28);
             String user            = tget(tok, 29);
+            String auth            = tget(tok, 30);
+            String deny            = tget(tok, 31);
 
             String ip = xForwardedFor != null ? xForwardedFor.split(",")[0].trim()
                       : xRealIp      != null ? xRealIp
@@ -356,7 +360,7 @@ public class LogViewerController {
                     connection, reqCacheControl,
                     respContentType, respContentLength,
                     respEncoding, respCacheControl,
-                    user);
+                    user, auth, deny);
         } catch (Exception e) {
             log.warn("parseTomcatAccess: failed to parse line: {}", line, e);
             return null;
@@ -445,7 +449,7 @@ public class LogViewerController {
                         null, null, null, null, null,
                         null, null, null, null, null,
                         null, null, null, null,
-                        null);
+                        null, null, null);
                 stack = null;
             } else if (pending != null && !line.isBlank()) {
                 if (stack == null) stack = new StringBuilder(line);
@@ -468,7 +472,7 @@ public class LogViewerController {
                     null, null, null, null, null,
                     null, null, null, null, null,
                     null, null, null, null,
-                    null));
+                    null, null, null));
         } else {
             out.add(e);
         }
@@ -585,6 +589,8 @@ public class LogViewerController {
             String  ip         = (String)   m.getOrDefault("ip",         "-");
             String  requestId  = (String)   m.getOrDefault("requestId",  null);
             String  user       = (String)   m.getOrDefault("user",       null);
+            String  auth       = (String)   m.getOrDefault("auth",       null);
+            String  deny       = (String)   m.getOrDefault("deny",       null);
             return new LogEntry(ts,
                     method, uri, status, durationMs,
                     null, null, ip, null, null, requestId, null,
@@ -592,7 +598,7 @@ public class LogViewerController {
                     null, null, null, null, null, null, null,
                     null, null, null, null, null, null, null,
                     null, null, null, null,
-                    user);
+                    user, auth, deny);
         } catch (Exception e) {
             return null;
         }

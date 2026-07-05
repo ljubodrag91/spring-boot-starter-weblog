@@ -3748,6 +3748,11 @@
                     r.ip ? ['IP', h(r.ip)] : null,
                     r.requestSize && r.requestSize !== '-' && r.requestSize !== '0' ? ['Sent', fmtBytes(r.requestSize)] : null,
                     r.protocol ? ['Protocol', h(r.protocol)] : null,
+                    (r.status === 401 || r.status === 403)
+                        ? ['Auth', r.auth
+                            ? `<span style="font-size:11px;font-weight:400">${h(r.auth.replace(/ len=\d+$/, '').slice(0, 60))}</span>`
+                            : `<span class="s4">no header</span>`]
+                        : null,
                 ].filter(Boolean);
                 $('modalMeta').innerHTML = tiles.map(([lbl, val]) =>
                     `<div class="modal-meta-tile"><span class="modal-meta-lbl">${lbl}</span><span class="modal-meta-val">${val}</span></div>`
@@ -3793,11 +3798,18 @@
                 if (r.reqCacheControl) row('Cache-Control', h(r.reqCacheControl));
                 row('X-Request-Id', `<span class="long">${h(r.requestId || '—')}</span>`, 'long');
                 if (r.user) row('Authenticated user', `<span class="long">${h(r.user)}</span>`, 'long');
+                if (r.auth) {
+                    const authCls = /expired/i.test(r.auth) ? ' s4' : '';
+                    row('Authorization', `<span class="long${authCls}"${authCls ? ' style="font-weight:600"' : ''}>${h(r.auth)}</span>`, 'long');
+                } else if (r.status === 401 || r.status === 403) {
+                    row('Authorization', `<span class="s4" style="font-weight:600">(no Authorization header)</span>`);
+                }
                 row('Referer', h(r.referer || '—'));
                 row('User-Agent', `<span class="long">${h(r.ua || '—')}</span>`, 'long');
 
                 // ── Response ──────────────────────────────────────
                 sec('Response');
+                if (r.deny) row('Denied because', `<span class="s4" style="font-weight:700">${h(r.deny)}</span>`);
                 row('Bytes sent', fmtBytes(r.requestSize));
                 if (r.respContentType) row('Content-Type', `<span class="long">${h(r.respContentType)}</span>`, 'long');
                 if (r.respContentLength) row('Content-Length', fmtBytes(r.respContentLength));
