@@ -13,7 +13,7 @@
 
     <groupId>com.eventhorizon</groupId>
     <artifactId>spring-boot-starter-weblog</artifactId>
-    <version>1.3.1-sb3</version>
+    <version>1.6.0-sb3</version>
     <packaging>jar</packaging>
 
     <name>spring-boot-starter-weblog</name>
@@ -99,6 +99,10 @@
                         <phase>compile</phase>
                         <goals><goal>compile</goal></goals>
                         <configuration>
+                            <!-- Versions are pinned explicitly: maven-compiler-plugin 3.11.0
+                                 (the version Boot 3.2.4 manages) does not inherit dependency
+                                 management into annotationProcessorPaths, so an unversioned
+                                 path fails the build. -->
                             <annotationProcessorPaths>
                                 <path>
                                     <groupId>org.springframework.boot</groupId>
@@ -134,17 +138,14 @@
     </build>
 
     <distributionManagement>
+        <!-- Published to GitHub Packages. The <id> must match the <server> id in the
+             settings.xml used at deploy time (see .github/workflows/publish.yml, which
+             sets server-id: github, and the consuming app's .mvn/settings.xml). -->
         <repository>
             <id>github</id>
-            <name>GitHub Packages — ljubodrag91/spring-boot-starter-weblog</name>
+            <name>GitHub Packages — spring-boot-starter-weblog</name>
             <url>https://maven.pkg.github.com/ljubodrag91/spring-boot-starter-weblog</url>
         </repository>
     </distributionManagement>
-
-    <scm>
-        <connection>scm:git:https://github.com/ljubodrag91/spring-boot-starter-weblog.git</connection>
-        <developerConnection>scm:git:git@github.com:ljubodrag91/spring-boot-starter-weblog.git</developerConnection>
-        <url>https://github.com/ljubodrag91/spring-boot-starter-weblog</url>
-    </scm>
 
 </project>

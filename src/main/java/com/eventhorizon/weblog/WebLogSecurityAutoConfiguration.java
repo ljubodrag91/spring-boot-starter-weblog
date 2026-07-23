@@ -4,6 +4,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.Customizer;
@@ -37,17 +38,27 @@ import org.springframework.security.web.SecurityFilterChain;
 @AutoConfiguration
 @ConditionalOnClass(SecurityFilterChain.class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+@EnableConfigurationProperties(WebLogProperties.class)
 public class WebLogSecurityAutoConfiguration {
 
     @Bean("weblogAdminFilterChain")
     @ConditionalOnMissingBean(name = "weblogAdminFilterChain")
     @Order(Integer.MAX_VALUE - 5)
-    SecurityFilterChain weblogAdminFilterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain weblogAdminFilterChain(HttpSecurity http, WebLogProperties props) throws Exception {
+        String authority = props.getRequiredAuthority();
         return http
                 .securityMatcher("/admin/logs", "/admin/logs/**")
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.ALWAYS))
-                .authorizeHttpRequests(a -> a.anyRequest().authenticated())
+                // Blank required-authority ⇒ any authenticated principal; otherwise demand the
+                // configured authority (e.g. ROLE_ADMIN) via log-viewer.required-authority.
+                .authorizeHttpRequests(a -> {
+                    if (authority == null || authority.isBlank()) {
+                        a.anyRequest().authenticated();
+                    } else {
+                        a.anyRequest().hasAuthority(authority);
+                    }
+                })
                 .httpBasic(Customizer.withDefaults())
                 .build();
     }

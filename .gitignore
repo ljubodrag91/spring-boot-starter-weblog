@@ -2,3 +2,6 @@ target/
 .idea/
 *.iml
 .DS_Store
+
+# Per-developer Claude Code permission grants — machine-local, not project config
+.claude/settings.local.json

@@ -1,6 +1,18 @@
 {
   "properties": [
     {
+      "name": "log-viewer.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Master switch for the in-browser log viewer (LogViewerController and its /admin/logs/** endpoints). When false the controller is not registered — no viewer/data/inflight/trace/page endpoints — while request-id, exclusions, compression, and the slow-request watchdog keep working. Set false where /admin/logs/** cannot be authenticated: with no Spring Security on the classpath the viewer is otherwise unprotected."
+    },
+    {
+      "name": "log-viewer.required-authority",
+      "type": "java.lang.String",
+      "defaultValue": "",
+      "description": "Authority required to access /admin/logs/** via the fallback security chain (WebLogSecurityAutoConfiguration). Blank means any authenticated principal; set e.g. ROLE_ADMIN to restrict further. Only consulted when the fallback chain is active (Spring Security present, no overriding chain)."
+    },
+    {
       "name": "log-viewer.access-log-directory",
       "type": "java.lang.String",
       "defaultValue": "logs",
@@ -9,7 +21,63 @@
     {
       "name": "log-viewer.excluded-prefixes",
       "type": "java.util.List<java.lang.String>",
-      "description": "URI path prefixes (after context-path is stripped) that are excluded from the Tomcat access log and written to exclusions.log instead. Default: /admin/logs, /swagger-ui, /v3/api-docs."
+      "description": "URI path prefixes (after context-path is stripped) that are excluded from the Tomcat access log and written to exclusions.log instead. Default: /admin/logs, /swagger-ui, /v3/api-docs, /actuator."
+    },
+    {
+      "name": "log-viewer.silent-prefixes",
+      "type": "java.util.List<java.lang.String>",
+      "description": "URI path prefixes (after context-path is stripped) suppressed from BOTH the Tomcat access log and exclusions.log — recorded nowhere. The quieter tier below excluded-prefixes (which still writes an exclusions.log audit line). Checked first, so a path matching both is silenced. Default silences the log viewer's own self-traffic (/admin/logs/inflight poll, /data, /page, /trace, css/js) while keeping the /admin/logs page load in exclusions.log. Add e.g. /actuator/health here to silence probe noise."
+    },
+    {
+      "name": "log-viewer.request-attribute",
+      "type": "java.lang.String",
+      "defaultValue": "",
+      "description": "Name of a per-request attribute appended to the access log as the final token (%{name}r) and surfaced in the /admin/logs/data JSON under this same key. The app sets it via request.setAttribute(name, value); logged verbatim (no masking), so never point it at a secret. Empty (the default) disables the trailing token — opt in deliberately, e.g. set it to 'apiKey' or 'tenantId'."
+    },
+    {
+      "name": "log-viewer.compression-log-prefixes",
+      "type": "java.util.List<java.lang.String>",
+      "description": "Filename prefixes of the log families the compression task compresses (each swept independently). The task compresses only — it never deletes archives. Default: access_log, catalina, error, exclusions, slow, bodies."
+    },
+    {
+      "name": "log-viewer.body.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Opt-in request/response body capture. When true, BodyCaptureFilter wraps every request and writes one JSON line per request to bodies.log, correlated by X-Request-Id. Off by default: bodies routinely carry credentials and personal data, and capture buffers both directions in memory."
+    },
+    {
+      "name": "log-viewer.body.max-bytes",
+      "type": "java.lang.Integer",
+      "defaultValue": 8192,
+      "description": "Per-side cap in bytes for captured bodies. Longer bodies are truncated and the captured JSON carries reqTruncated/resTruncated=true."
+    },
+    {
+      "name": "log-viewer.body.redact-keys",
+      "type": "java.util.List<java.lang.String>",
+      "description": "Case-insensitive JSON keys whose values are replaced with \"***\" before a body is written. Flat regex substitution — it does NOT traverse nested JSON, so review bodies.log before treating it as safe to share. Default: password, secret, token, authorization, apiKey, api_key."
+    },
+    {
+      "name": "log-viewer.body.skip-content-types",
+      "type": "java.util.List<java.lang.String>",
+      "description": "Content-type prefixes whose bodies are never captured. Default skips multipart uploads and binary payloads: multipart/, image/, video/, audio/, application/octet-stream."
+    },
+    {
+      "name": "log-viewer.compression-cron",
+      "type": "java.lang.String",
+      "defaultValue": "0 10 0 * * *",
+      "description": "Cron expression for the daily task that gzips previous days' rolled log files (access + catalina/error/exclusions). Default 00:10. Set to '-' to disable. The task only compresses — it never deletes archives."
+    },
+    {
+      "name": "log-viewer.access-log-time-unit",
+      "type": "com.eventhorizon.weblog.WebLogProperties$AccessLogTimeUnit",
+      "defaultValue": "micros",
+      "description": "Unit Tomcat's AccessLogValve writes the %D (duration) and %F (TTFB) tokens in. The viewer normalises both to milliseconds: MICROS divides by 1000, MILLIS leaves them unchanged. Default MICROS is historical; Tomcat documents these tokens as milliseconds, so if durations/p95 look 1000x too small, set this to MILLIS."
+    },
+    {
+      "name": "log-viewer.max-compressed-read-bytes",
+      "type": "org.springframework.util.unit.DataSize",
+      "defaultValue": "50MB",
+      "description": "Largest compressed log file the viewer will decompress and read. Larger files are skipped (returned empty). Raise it to keep large daily archives visible."
     }
   ],
   "hints": [
@@ -21,6 +89,17 @@
         { "value": "/v3/api-docs",   "description": "OpenAPI spec (default)" },
         { "value": "/actuator",      "description": "Spring Boot Actuator" },
         { "value": "/health",        "description": "Health check endpoint" }
+      ]
+    },
+    {
+      "name": "log-viewer.silent-prefixes",
+      "values": [
+        { "value": "/admin/logs/inflight",    "description": "Live in-flight strip poll (default)" },
+        { "value": "/admin/logs/data",        "description": "Log viewer data fetch (default)" },
+        { "value": "/admin/logs/page",        "description": "Log viewer history paging (default)" },
+        { "value": "/admin/logs/trace",       "description": "Log viewer stack-trace lookup (default)" },
+        { "value": "/admin/logs/log-viewer.", "description": "Log viewer CSS/JS assets (default)" },
+        { "value": "/actuator/health",        "description": "Health/liveness probe noise" }
       ]
     }
   ]

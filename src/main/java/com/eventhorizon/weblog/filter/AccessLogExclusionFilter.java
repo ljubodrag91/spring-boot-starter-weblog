@@ -1,5 +1,7 @@
 package com.eventhorizon.weblog.filter;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.eventhorizon.weblog.WebLogProperties;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -18,7 +20,9 @@ import org.springframework.core.Ordered;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Two responsibilities:
@@ -42,20 +46,21 @@ import java.util.List;
  * <p>No response-wrapper is needed: {@link HttpServletResponse#getStatus()}
  * is readable after {@code chain.doFilter()} returns.
  *
- * <h2>Excluded prefixes</h2>
- * Controlled by {@link WebLogProperties#getExcludedPrefixes()}.
- * Default: {@code /admin/logs}, {@code /swagger-ui}, {@code /v3/api-docs}, {@code /actuator}.
- * Override via {@code log-viewer.excluded-prefixes} in {@code application.properties}.
- *
- * <h2>Authenticated user</h2>
- * When Spring Security is present, a companion filter at
- * {@link Ordered#LOWEST_PRECEDENCE} ({@link #principalCaptureFilter()}) records the
- * authenticated principal's name into {@link #USER_REQ_ATTR}. This filter's
- * {@code finally} block reads that attribute and includes a {@code "user"} field
- * in the exclusions JSON. The capture filter is necessary because
- * {@code SecurityContextHolder} is cleared by Spring Security in its own
- * {@code finally} (which runs <em>before</em> this filter's {@code finally}
- * since this filter is outermost).
+ * <h2>Excluded vs silent prefixes</h2>
+ * Two tiers, both controlled by {@link WebLogProperties}:
+ * <ul>
+ *   <li><b>Excluded</b> ({@link WebLogProperties#getExcludedPrefixes()}, default {@code /admin/logs},
+ *       {@code /swagger-ui}, {@code /v3/api-docs}, {@code /actuator}) — kept out of the Tomcat access log but still
+ *       recorded as one JSON line in {@code exclusions.log} (an audit trail of tooling traffic).</li>
+ *   <li><b>Silent</b> ({@link WebLogProperties#getSilentPrefixes()}) — suppressed from the access log
+ *       <i>and</i> {@code exclusions.log}: recorded nowhere. This is for the viewer's own
+ *       high-frequency self-polling (e.g. the {@code /admin/logs/inflight} live strip), which would
+ *       otherwise flood the exclusions audit with its own ticks.</li>
+ * </ul>
+ * A silent match alone suppresses the access log (so the path need not also be excluded), and it is
+ * checked first, so a path matching both tiers (e.g. {@code /admin/logs/data} under the
+ * {@code /admin/logs} excluded prefix) is silenced rather than logged.
+ * Override via {@code log-viewer.excluded-prefixes} / {@code log-viewer.silent-prefixes}.
  */
 @Configuration
 @RequiredArgsConstructor
@@ -73,6 +78,11 @@ public class AccessLogExclusionFilter {
 
     private static final Logger EXCL_LOG = LoggerFactory.getLogger(EXCLUSIONS_LOGGER_NAME);
 
+    /** Diagnostics for this filter itself (not the exclusions data stream). */
+    private static final Logger LOG = LoggerFactory.getLogger(AccessLogExclusionFilter.class);
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     private static final DateTimeFormatter TS_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
@@ -81,6 +91,7 @@ public class AccessLogExclusionFilter {
     @Bean
     public FilterRegistrationBean<Filter> accessLogExclusionFilter() {
         List<String> excluded = properties.getExcludedPrefixes();
+        List<String> silent   = properties.getSilentPrefixes();
 
         FilterRegistrationBean<Filter> reg = new FilterRegistrationBean<>();
         reg.setFilter((ServletRequest req, ServletResponse res, FilterChain chain) -> {
@@ -94,10 +105,12 @@ public class AccessLogExclusionFilter {
             String path = (ctx != null && uri.startsWith(ctx))
                     ? uri.substring(ctx.length()) : uri;
 
-            boolean isExcluded = false;
-            for (String prefix : excluded) {
-                if (path.startsWith(prefix)) { isExcluded = true; break; }
-            }
+            // Silent is checked first: a silent path is suppressed from BOTH the access log and
+            // exclusions.log (recorded nowhere), so it must win over an excluded prefix it also
+            // matches. Excluded (but not silent) paths are kept out of the access log yet still get
+            // one audit line in exclusions.log below.
+            boolean isSilent   = startsWithAny(path, silent);
+            boolean isExcluded = isSilent || startsWithAny(path, excluded);
 
             if (!isExcluded) {
                 chain.doFilter(req, res);
@@ -107,40 +120,45 @@ public class AccessLogExclusionFilter {
             // Suppress from Tomcat's native access log
             req.setAttribute("skipLog", Boolean.TRUE);
 
+            // A silent path stops here — no exclusions.log line. Pass through and return so the
+            // finally-block writer never runs for it.
+            if (isSilent) {
+                chain.doFilter(req, res);
+                return;
+            }
+
             long start = System.currentTimeMillis();
             try {
                 chain.doFilter(req, res);
             } finally {
                 long   dur    = System.currentTimeMillis() - start;
                 int    status = (res instanceof HttpServletResponse hres) ? hres.getStatus() : 0;
-                String ip     = resolveIp(http);
+                String ip     = ClientIp.fromRequest(http);
                 String ts     = LocalDateTime.now().format(TS_FMT);
                 // X-Request-Id was set on the response by RequestIdFilter (which runs first).
                 String reqId  = (res instanceof HttpServletResponse hres)
                         ? hres.getHeader(RequestIdFilter.HEADER) : null;
-                Object userAttr = http.getAttribute(USER_REQ_ATTR);
-                String user = userAttr instanceof String s && !s.isBlank() ? s : null;
-                Object authAttr = http.getAttribute(AuthInfoFilter.AUTH_REQ_ATTR);
-                String auth = authAttr instanceof String s && !s.isBlank() ? s : null;
-                Object denyAttr = http.getAttribute(AuthInfoFilter.DENY_REQ_ATTR);
-                String deny = denyAttr instanceof String s && !s.isBlank() ? s : null;
-                // Escape backslash and double-quote so the URI/user stay valid JSON.
-                String safeUri  = jsonEscape(uri);
-                String safeUser = user != null ? jsonEscape(user) : null;
-                String safeAuth = auth != null ? jsonEscape(auth) : null;
-                String safeDeny = deny != null ? jsonEscape(deny) : null;
-                String json = "{\"ts\":\"" + ts + "\""
-                        + ",\"method\":\"" + http.getMethod() + "\""
-                        + ",\"uri\":\"" + safeUri + "\""
-                        + ",\"status\":" + status
-                        + ",\"durationMs\":" + dur
-                        + ",\"ip\":\"" + ip + "\""
-                        + (reqId    != null ? ",\"requestId\":\"" + reqId + "\""  : "")
-                        + (safeUser != null ? ",\"user\":\"" + safeUser + "\""    : "")
-                        + (safeAuth != null ? ",\"auth\":\"" + safeAuth + "\""    : "")
-                        + (safeDeny != null ? ",\"deny\":\"" + safeDeny + "\""    : "")
-                        + "}";
-                EXCL_LOG.info("{}", json);
+                // Serialize with Jackson rather than concatenating strings: `ip` derives from
+                // the attacker-controlled X-Forwarded-For header (and `uri`/`method` are also
+                // request-supplied), so hand-rolled escaping is easy to get wrong and invites
+                // JSON log-injection / entry-forgery. Jackson escapes every value, and the
+                // viewer parses this file back with the same ObjectMapper — symmetric by design.
+                Map<String, Object> rec = new LinkedHashMap<>();
+                rec.put("ts", ts);
+                rec.put("method", http.getMethod());
+                rec.put("uri", uri);
+                rec.put("status", status);
+                rec.put("durationMs", dur);
+                rec.put("ip", ip);
+                if (reqId != null) rec.put("requestId", reqId);
+                putIfPresent(rec, "user", http.getAttribute(USER_REQ_ATTR));
+                putIfPresent(rec, "auth", http.getAttribute(AuthInfoFilter.AUTH_REQ_ATTR));
+                putIfPresent(rec, "deny", http.getAttribute(AuthInfoFilter.DENY_REQ_ATTR));
+                try {
+                    EXCL_LOG.info("{}", OBJECT_MAPPER.writeValueAsString(rec));
+                } catch (JsonProcessingException e) {
+                    LOG.warn("Failed to serialize exclusion log entry for uri={}", uri, e);
+                }
             }
         });
         reg.addUrlPatterns("/*");
@@ -181,16 +199,16 @@ public class AccessLogExclusionFilter {
         return reg;
     }
 
-    private static String resolveIp(HttpServletRequest req) {
-        String xff = req.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
-        String xri = req.getHeader("X-Real-IP");
-        if (xri != null && !xri.isBlank()) return xri;
-        return req.getRemoteAddr();
+    private static boolean startsWithAny(String path, List<String> prefixes) {
+        for (String prefix : prefixes) {
+            if (path.startsWith(prefix)) return true;
+        }
+        return false;
     }
 
-    private static String jsonEscape(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    /** Adds {@code key} to {@code rec} only when the attribute is a non-blank String. */
+    private static void putIfPresent(Map<String, Object> rec, String key, Object attr) {
+        if (attr instanceof String s && !s.isBlank()) rec.put(key, s);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -203,7 +221,7 @@ public class AccessLogExclusionFilter {
     // ─────────────────────────────────────────────────────────────────────
 
     private static volatile boolean LOOKUP_INITIALIZED = false;
-    private static volatile Method GET_CONTEXT;       // SecurityContextHolder.getContext()
+    private static volatile Method GET_CONTEXT;        // SecurityContextHolder.getContext()
     private static volatile Method GET_AUTHENTICATION; // SecurityContext.getAuthentication()
     private static volatile Method IS_AUTHENTICATED;   // Authentication.isAuthenticated()
     private static volatile Method GET_NAME;           // Authentication.getName()

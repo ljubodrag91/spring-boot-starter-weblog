@@ -6,26 +6,58 @@
 
         <include resource="logback-weblog-include.xml"/>
 
-    What this provides
-    ──────────────────
-    1. EXCLUSIONS LOG  — logs/exclusions.log
+    Log directory
+    ─────────────
+    All three files are written under the directory bound to the
+    `log-viewer.access-log-directory` property (see <springProperty> below),
+    defaulting to "logs". This is the same directory the Tomcat access-log
+    valve writes to and the log viewer reads from, so overriding that one
+    property relocates every stream consistently.
+
+    What this provides (active + rolled files are plain, dated .log, e.g.
+    exclusions.2026-07-15.0.log; AccessLogCompressionTask gzips past days)
+    ──────────────
+    1. EXCLUSIONS LOG  — <dir>/exclusions.<date>.<i>.log[.gz]
        Routes the "com.eventhorizon.weblog.exclusions" logger to a rolling file.
        Each line is a compact JSON object written by AccessLogExclusionFilter.
        The log viewer reads this file for the "Excluded" tab.
 
-    2. CATALINA LOG — logs/catalina.log
+    2. CATALINA LOG — <dir>/catalina.<date>.<i>.log[.gz]
        Routes org.apache.catalina / tomcat / coyote internals to a
        daily+size-capped rolling file (INFO+). The log viewer reads this
        for the "Server Log" tab.
 
-    3. CATALINA ERROR LOG — logs/error.log
+    3. CATALINA ERROR LOG — <dir>/error.<date>.<i>.log[.gz]
        Same sources, ERROR-level only, separate file. The log viewer reads
        this for the "Error Log" tab.
 
+       SCOPE / trace-join caveat: only org.apache.catalina/tomcat/coyote ERRORs land here.
+       The viewer's "click a 5xx → view stack trace" feature joins the access log to this file
+       by X-Request-Id, so a stack trace resolves only if the exception was logged to error.log.
+       Uncaught exceptions surfaced by Tomcat's StandardWrapperValve are captured; exceptions your
+       app catches and logs under its OWN logger are NOT — they never reach error.log. To make the
+       trace-join work for your application's exceptions, route your base package's ERRORs to the
+       error appender defined below, e.g. in your logback-spring.xml (after the <include>):
+
+           <logger name="com.yourcompany.yourapp" level="ERROR" additivity="true">
+               <appender-ref ref="WEBLOG_ASYNC_CATALINA_ERROR"/>
+           </logger>
+
+       (additivity=true keeps your existing console/file logging; set false to send ERRORs only to
+       error.log. MDC requestId is present because RequestIdFilter runs for the whole request.)
+
     Rolling policy
     ──────────────
-    All three use SizeAndTimeBasedRollingPolicy with .gz compression so
-    storage stays bounded. Adjust maxHistory / totalSizeCap to taste.
+    All three use SizeAndTimeBasedRollingPolicy that rolls daily and by size
+    (maxFileSize) to PLAIN .log files — no .gz, no maxHistory/totalSizeCap.
+    Compression and retention are owned entirely by AccessLogCompressionTask
+    (log-viewer.compression-* properties), which sweeps these prefixes the same
+    way it does the Tomcat access log. This is deliberate: Logback only
+    compresses/prunes at a rollover that occurs while the JVM is running, so on
+    an app that is down over midnight those steps are silently skipped and files
+    orphan as plain .log. The task's nightly directory sweep catches up the whole
+    backlog regardless of when the app was running. Do not re-add .gz/maxHistory
+    here or the two mechanisms will both try to own the same files.
 
     Logger name coupling
     ────────────────────
@@ -35,6 +67,13 @@
 -->
 <included>
 
+    <!-- Directory for the catalina/error/exclusions files. Bound from the same
+         `log-viewer.access-log-directory` property that drives the Tomcat access-log valve
+         and the log viewer's reader, so all four streams stay in one place. Requires this
+         include to be pulled into the app's logback-spring.xml (springProperty is a Spring
+         Boot Logback extension). Defaults to "logs" when the property is unset. -->
+    <springProperty name="weblogLogDir" source="log-viewer.access-log-directory" defaultValue="logs"/>
+
     <!-- ═══════════════════════════════════════════════════════════════
          EXCLUSIONS LOG
          ═══════════════════════════════════════════════════════════════ -->
@@ -42,11 +81,10 @@
               class="ch.qos.logback.core.rolling.RollingFileAppender">
         <!-- No <file> element: Logback writes directly to the dated pattern name and avoids
              the rename-before-compress step that fails on mounted/Windows filesystems. -->
+        <!-- Plain .log (no .gz); compression + retention owned by AccessLogCompressionTask. -->
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>logs/exclusions.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <fileNamePattern>${weblogLogDir}/exclusions.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
             <maxFileSize>20MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>200MB</totalSizeCap>
         </rollingPolicy>
         <!-- Pattern is intentionally bare: the message IS the JSON line -->
         <encoder>
@@ -56,9 +94,14 @@
 
     <appender name="WEBLOG_ASYNC_EXCLUSIONS"
               class="ch.qos.logback.classic.AsyncAppender">
-        <queueSize>512</queueSize>
+        <!-- Audit stream: prefer brief back-pressure over silently dropping lines. A generous
+             queue plus neverBlock=false means that, under a sustained burst that fills the queue,
+             the producing thread blocks momentarily rather than discarding audit entries (the old
+             neverBlock=true dropped them, defeating the audit trail exactly under load).
+             discardingThreshold=0 keeps every level while the queue has room. -->
+        <queueSize>2048</queueSize>
         <discardingThreshold>0</discardingThreshold>
-        <neverBlock>true</neverBlock>
+        <neverBlock>false</neverBlock>
         <appender-ref ref="WEBLOG_EXCLUSIONS_FILE"/>
     </appender>
 
@@ -70,15 +113,57 @@
     </logger>
 
     <!-- ═══════════════════════════════════════════════════════════════
-         BODIES LOG  (request/response bodies — opt-in via log-viewer.body.enabled=true)
+         SLOW REQUEST LOG
+         Compact JSON lines written by SlowRequestWatchdog for requests
+         still in flight past log-viewer.slow-request-threshold. This is
+         the only stream that can show a request which never completes
+         (the Tomcat access log writes only at completion). The log viewer
+         reads this file for the "Slow" tab.
+         ═══════════════════════════════════════════════════════════════ -->
+    <appender name="WEBLOG_SLOW_FILE"
+              class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- No <file> element: avoids rename-before-compress failure on mounted filesystems. -->
+        <!-- Plain .log (no .gz); compression + retention owned by AccessLogCompressionTask. -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${weblogLogDir}/slow.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>20MB</maxFileSize>
+        </rollingPolicy>
+        <!-- Pattern is intentionally bare: the message IS the JSON line -->
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="WEBLOG_ASYNC_SLOW"
+              class="ch.qos.logback.classic.AsyncAppender">
+        <!-- Slow/never-completing evidence: like the exclusions audit stream, prefer brief
+             back-pressure over dropping lines. This is often the ONLY record of a request that
+             never completes, so losing it under load defeats the watchdog's purpose. -->
+        <queueSize>2048</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>false</neverBlock>
+        <appender-ref ref="WEBLOG_SLOW_FILE"/>
+    </appender>
+
+    <!-- additivity=false keeps JSON lines out of the root CONSOLE appender -->
+    <logger name="com.eventhorizon.weblog.slow"
+            level="INFO"
+            additivity="false">
+        <appender-ref ref="WEBLOG_ASYNC_SLOW"/>
+    </logger>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         BODIES LOG  (request/response bodies — opt-in via
+         log-viewer.body.enabled=true; nothing is written while the
+         BodyCaptureFilter is disabled, which is the default)
          ═══════════════════════════════════════════════════════════════ -->
     <appender name="WEBLOG_BODIES_FILE"
               class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- No <file> element: avoids rename-before-compress failure on mounted filesystems. -->
+        <!-- Plain .log (no .gz); compression + retention owned by AccessLogCompressionTask. -->
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>logs/bodies.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
-            <maxFileSize>50MB</maxFileSize>
-            <maxHistory>14</maxHistory>
-            <totalSizeCap>500MB</totalSizeCap>
+            <fileNamePattern>${weblogLogDir}/bodies.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>20MB</maxFileSize>
         </rollingPolicy>
         <!-- Pattern is intentionally bare: the message IS the JSON line -->
         <encoder>
@@ -88,15 +173,16 @@
 
     <appender name="WEBLOG_ASYNC_BODIES"
               class="ch.qos.logback.classic.AsyncAppender">
-        <queueSize>512</queueSize>
+        <!-- Bodies are a debugging aid, not an audit trail: unlike the exclusions/slow
+             streams this one prefers dropping lines over back-pressuring request threads,
+             because capture is opt-in and can be very high volume. -->
+        <queueSize>2048</queueSize>
         <discardingThreshold>0</discardingThreshold>
         <neverBlock>true</neverBlock>
         <appender-ref ref="WEBLOG_BODIES_FILE"/>
     </appender>
 
-    <!-- additivity=false keeps body lines out of the root CONSOLE appender. The
-         logger emits at INFO so default-INFO root configurations route nothing
-         here unless the BodyCaptureFilter bean is registered. -->
+    <!-- additivity=false keeps JSON lines out of the root CONSOLE appender -->
     <logger name="com.eventhorizon.weblog.bodies"
             level="INFO"
             additivity="false">
@@ -109,14 +195,13 @@
     <appender name="WEBLOG_CATALINA_FILE"
               class="ch.qos.logback.core.rolling.RollingFileAppender">
         <!-- No <file> element: avoids rename-before-compress failure on mounted filesystems. -->
+        <!-- Plain .log (no .gz); compression + retention owned by AccessLogCompressionTask. -->
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>logs/catalina.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <fileNamePattern>${weblogLogDir}/catalina.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
             <maxFileSize>50MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>500MB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{50} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [%X{requestId:-}] %logger{50} - %msg%n</pattern>
         </encoder>
     </appender>
 
@@ -129,14 +214,13 @@
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
             <level>ERROR</level>
         </filter>
+        <!-- Plain .log (no .gz); compression + retention owned by AccessLogCompressionTask. -->
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>logs/error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <fileNamePattern>${weblogLogDir}/error.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
             <maxFileSize>20MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>200MB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{50} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [%X{requestId:-}] %logger{50} - %msg%n</pattern>
         </encoder>
     </appender>
 

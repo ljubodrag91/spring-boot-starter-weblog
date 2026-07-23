@@ -74,10 +74,11 @@ public class AuthInfoFilter {
             chain.doFilter(req, res);
         });
         reg.addUrlPatterns("/*");
-        // After RequestIdFilter/AccessLogExclusionFilter/BodyCaptureFilter (HP..HP+2).
+        // After RequestIdFilter/AccessLogExclusionFilter/InFlightRequestFilter/BodyCaptureFilter
+        // (HP..HP+3).
         // Position is not load-bearing — the attribute only needs to exist before the
         // valve logs the request, which happens after the response completes.
-        reg.setOrder(Ordered.HIGHEST_PRECEDENCE + 3);
+        reg.setOrder(Ordered.HIGHEST_PRECEDENCE + 4);
         reg.setName("authInfoFilter");
         return reg;
     }

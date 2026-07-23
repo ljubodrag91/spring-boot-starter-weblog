@@ -29,9 +29,11 @@ import java.util.regex.Pattern;
  * as JSON lines correlated by {@code X-Request-Id}.
  *
  * <p>Auto-configured only when {@code log-viewer.body.enabled=true}. The filter is
- * registered at {@code HIGHEST_PRECEDENCE + 2} — after {@link RequestIdFilter}
- * (so the response has the request ID) and after {@link AccessLogExclusionFilter}
- * (so exclusion suppression and body capture are independent concerns).
+ * registered at {@code HIGHEST_PRECEDENCE + 3} — after {@link RequestIdFilter}
+ * (so the response has the request ID), after {@link AccessLogExclusionFilter}
+ * (so exclusion suppression and body capture are independent concerns), and after
+ * {@link InFlightRequestFilter} ({@code HIGHEST_PRECEDENCE + 2}), which must wrap the
+ * request as early as possible so a hung request is still recorded in the registry.
  *
  * <h2>Wire format</h2>
  * Each captured line is a single JSON object on one line, e.g.:
@@ -156,7 +158,7 @@ public class BodyCaptureFilter {
 
         FilterRegistrationBean<OncePerRequestFilter> reg = new FilterRegistrationBean<>(filter);
         reg.addUrlPatterns("/*");
-        reg.setOrder(Ordered.HIGHEST_PRECEDENCE + 2);
+        reg.setOrder(Ordered.HIGHEST_PRECEDENCE + 3);
         reg.setName("bodyCaptureFilter");
         return reg;
     }
